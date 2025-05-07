@@ -67,6 +67,9 @@ class CarDetector:
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
         max_unmatched_frames = 10  # Allow trackers to persist this many frames without detection
+        start_time = time.time()  # Track total processing time
+        fps_values = []  # List to store FPS values
+        
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
@@ -185,11 +188,23 @@ class CarDetector:
                     cv2.putText(frame, f'ID: {track_id}', (x1, y1-10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
             
+            # Calculate FPS
+            if not hasattr(self, 'prev_time'):
+                self.prev_time = time.time()
+                self.fps = 0
+            else:
+                current_time = time.time()
+                self.fps = 1 / (current_time - self.prev_time)
+                self.prev_time = current_time
+                fps_values.append(self.fps)  # Store FPS value
+            
             # Display the frame with detections
             cv2.putText(frame, f'Total Unique Vehicles: {self.total_cars}', 
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             cv2.putText(frame, f'Currently Tracking: {len(self.trackers)}', 
-                       (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(frame, f'FPS: {self.fps:.1f}', 
+                       (frame_width - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             
             cv2.imshow('Car Detection', frame)
             
@@ -200,14 +215,18 @@ class CarDetector:
         
         cap.release()
         cv2.destroyAllWindows()
-        return self.total_cars
+        
+        # Calculate average FPS
+        avg_fps = sum(fps_values) / len(fps_values) if fps_values else 0
+        return self.total_cars, avg_fps
 
 def main():
-    video_path = "./27260-362770008_medium.mp4"
+    video_path = "videos/highway_moderate_tiny.mp4"
     
     detector = CarDetector(video_path)
-    total_cars = detector.process_video()
+    total_cars, avg_fps = detector.process_video()
     print(f"Total unique vehicles detected: {total_cars}")
+    print(f"Average FPS: {avg_fps:.1f}")
 
 if __name__ == "__main__":
     main() 
