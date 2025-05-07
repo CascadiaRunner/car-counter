@@ -203,8 +203,6 @@ class CarDetector:
                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             cv2.putText(frame, f'Currently Tracking: {len(self.trackers)}', 
                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-            cv2.putText(frame, f'FPS: {self.fps:.1f}', 
-                       (frame_width - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             
             cv2.imshow('Car Detection', frame)
             
@@ -221,12 +219,10 @@ class CarDetector:
         return self.total_cars, avg_fps
 
 def main():
-    video_path = "videos/highway_moderate_tiny.mp4"
+    video_path = "videos/highway_light_tiny.mp4"
     
     detector = CarDetector(video_path)
-    total_cars, avg_fps = detector.process_video()
-    print(f"Total unique vehicles detected: {total_cars}")
-    print(f"Average FPS: {avg_fps:.1f}")
+    detector.process_video()
 
 if __name__ == "__main__":
     main() 
