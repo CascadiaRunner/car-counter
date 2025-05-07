@@ -40,4 +40,5 @@ Thumbs.db
 
 # Project specific
 *.pt
-*.mp4 
+videos/*.mp4
+!output/demo_output.mp4 

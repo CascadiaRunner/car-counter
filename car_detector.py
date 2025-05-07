@@ -5,10 +5,12 @@ import time
 import torch
 from ultralytics.nn.tasks import DetectionModel
 from scipy.optimize import linear_sum_assignment
+import os
 
 class CarDetector:
-    def __init__(self, video_path):
+    def __init__(self, video_path, output_path=None):
         self.video_path = video_path
+        self.output_path = output_path
         # Load model
         self.model = YOLO('yolov8n.pt')
         self.total_cars = 0  # Total historical count
@@ -23,6 +25,11 @@ class CarDetector:
         self.detection_interval = 3  # Run YOLO detection more frequently
         self.last_detection_frame = 0
         self.edge_tolerance_frames = 5  # Number of frames to allow tracking near edge before dropping
+        
+        # Video writer setup
+        self.video_writer = None
+        self.frame_width = None
+        self.frame_height = None
         
     def calculate_iou(self, box1, box2):
         """Calculate Intersection over Union between two bounding boxes"""
@@ -63,8 +70,15 @@ class CarDetector:
             print("Error: Could not open video file")
             return
         
-        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        # Initialize video writer if output path is provided
+        if self.output_path:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            self.video_writer = cv2.VideoWriter(self.output_path, fourcc, fps, 
+                                              (self.frame_width, self.frame_height))
         
         max_unmatched_frames = 10  # Allow trackers to persist this many frames without detection
         start_time = time.time()  # Track total processing time
@@ -75,6 +89,11 @@ class CarDetector:
             if not ret:
                 break
                 
+            # Create a semi-transparent overlay for text
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (self.frame_width, 100), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+            
             current_detections = []
             
             # Only run YOLO detection every few frames
@@ -89,10 +108,10 @@ class CarDetector:
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                         conf = box.conf[0].cpu().numpy()
                         if conf > self.confidence_threshold:
-                            x1 = max(0, min(int(x1), frame_width - 1))
-                            y1 = max(0, min(int(y1), frame_height - 1))
-                            x2 = max(0, min(int(x2), frame_width - 1))
-                            y2 = max(0, min(int(y2), frame_height - 1))
+                            x1 = max(0, min(int(x1), self.frame_width - 1))
+                            y1 = max(0, min(int(y1), self.frame_height - 1))
+                            x2 = max(0, min(int(x2), self.frame_width - 1))
+                            y2 = max(0, min(int(y2), self.frame_height - 1))
                             
                             if x2 > x1 and y2 > y1:
                                 current_detections.append((x1, y1, x2, y2))
@@ -105,14 +124,14 @@ class CarDetector:
                 if success:
                     x, y, w, h = [int(v) for v in bbox]
                     # Remove if box is at or beyond the edge (within 50px margin)
-                    if self.is_box_at_edge(x, y, w, h, frame_width, frame_height, margin=50):
+                    if self.is_box_at_edge(x, y, w, h, self.frame_width, self.frame_height, margin=50):
                         continue
                     # Remove if area is too small
                     if w * h < 10:
                         continue
-                    if w <= 0 or h <= 0 or w > frame_width * 2 or h > frame_height * 2:
+                    if w <= 0 or h <= 0 or w > self.frame_width * 2 or h > self.frame_height * 2:
                         continue
-                    if 15 < w < frame_width/1.5 and 15 < h < frame_height/1.5:
+                    if 15 < w < self.frame_width/1.5 and 15 < h < self.frame_height/1.5:
                         active_trackers.append((tracker, track_id, frames_without_detection, (x, y, x+w, y+h)))
                         tracker_bboxes.append((x, y, x+w, y+h))
                     else:
@@ -156,7 +175,7 @@ class CarDetector:
                 w, h = x2 - x1, y2 - y1
                 # Skip if detection is within 50px of any edge
                 if (
-                    x1 <= 50 or y1 <= 50 or x2 >= frame_width - 50 or y2 >= frame_height - 50
+                    x1 <= 50 or y1 <= 50 or x2 >= self.frame_width - 50 or y2 >= self.frame_height - 50
                 ):
                     continue
                 if w > 0 and h > 0:
@@ -180,13 +199,16 @@ class CarDetector:
                     except cv2.error:
                         continue
             
-            # Draw boxes for active trackers
+            # Draw boxes for active trackers with improved visualization
             for tracker, track_id, _, last_bbox in self.trackers:
                 if last_bbox is not None:
                     x1, y1, x2, y2 = last_bbox
+                    # Draw thicker, more visible box
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(frame, f'ID: {track_id}', (x1, y1-10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                    # Add a background for the ID text
+                    cv2.rectangle(frame, (x1, y1-30), (x1+60, y1), (0, 255, 0), -1)
+                    cv2.putText(frame, f'ID: {track_id}', (x1+5, y1-10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
             
             # Calculate FPS
             if not hasattr(self, 'prev_time'):
@@ -198,11 +220,17 @@ class CarDetector:
                 self.prev_time = current_time
                 fps_values.append(self.fps)  # Store FPS value
             
-            # Display the frame with detections
-            cv2.putText(frame, f'Total Unique Vehicles: {self.total_cars}', 
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            # Add title and improved stats display
+            cv2.putText(frame, 'Vehicle Detection & Tracking Demo', 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            cv2.putText(frame, f'Total Vehicles: {self.total_cars}', 
+                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame, f'Currently Tracking: {len(self.trackers)}', 
-                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                       (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+            # Write frame to output video if enabled
+            if self.video_writer is not None:
+                self.video_writer.write(frame)
             
             cv2.imshow('Car Detection', frame)
             
@@ -212,6 +240,8 @@ class CarDetector:
             self.frame_count += 1
         
         cap.release()
+        if self.video_writer is not None:
+            self.video_writer.release()
         cv2.destroyAllWindows()
         
         # Calculate average FPS
@@ -219,9 +249,14 @@ class CarDetector:
         return self.total_cars, avg_fps
 
 def main():
-    video_path = "videos/highway_light_tiny.mp4"
+    # Create output directory if it doesn't exist
+    os.makedirs('output', exist_ok=True)
     
-    detector = CarDetector(video_path)
+    # Use a more interesting video for the demo
+    video_path = "videos/highway_light_medium.mp4"
+    output_path = "output/demo_output.mp4"
+    
+    detector = CarDetector(video_path, output_path)
     detector.process_video()
 
 if __name__ == "__main__":
